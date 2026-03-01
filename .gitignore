@@ -1,2 +1,24 @@
-# Auto Claude data directory
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment files with secrets
+pwa/.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Auto Claude
 .auto-claude/
+
+# Playwright MCP
+.playwright-mcp/
+
+# Screenshots (dev artifacts)
+*.png

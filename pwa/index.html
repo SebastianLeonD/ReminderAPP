@@ -301,7 +301,14 @@
       scrollbar-width: none;
     }
     .transcript-area::-webkit-scrollbar { display: none; }
-    .transcript-placeholder { color: var(--text3); font-style: italic; font-size: 14px; }
+    .transcript-area.editable {
+      border: 1px solid var(--border);
+      background: var(--bg);
+      resize: none;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .transcript-area.editable:focus { border-color: var(--accent); }
 
     /* Bottom action bar */
     .rec-actions {
@@ -1062,13 +1069,13 @@
       }
       card.appendChild(waveform);
 
-      // ── Transcription ──
-      var transcriptArea = el('div', { className: 'transcript-area' });
-      if (S.voiceText) {
-        transcriptArea.appendChild(el('span', { textContent: S.voiceText }));
-      } else {
-        transcriptArea.appendChild(el('span', { className: 'transcript-placeholder', textContent: speechSupported ? 'Tap the mic and speak naturally...' : 'Use the text input below' }));
-      }
+      // ── Transcription (editable) ──
+      var transcriptArea = document.createElement('textarea');
+      transcriptArea.className = 'transcript-area editable';
+      transcriptArea.id = 'voice-textarea';
+      transcriptArea.value = S.voiceText;
+      transcriptArea.placeholder = speechSupported ? 'Tap the mic and speak naturally, or type here...' : 'Type your reminder here...';
+      transcriptArea.addEventListener('input', function() { S.voiceText = this.value; });
       card.appendChild(transcriptArea);
 
       // ── Bottom actions ──

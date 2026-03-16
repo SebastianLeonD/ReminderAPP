@@ -1341,6 +1341,45 @@
       appSection.appendChild(appCard);
       container.appendChild(appSection);
 
+      // Notifications
+      var notifSection = el('div', { className: 'settings-section' });
+      notifSection.appendChild(el('div', { className: 'settings-heading', textContent: 'Notifications' }));
+      var notifCard = el('div', { className: 'settings-card' });
+
+      var permRow = el('div', { className: 'settings-row' });
+      permRow.appendChild(el('label', { textContent: 'Permission' }));
+      var permStatus = 'Notification' in window ? Notification.permission : 'unsupported';
+      var permLabel = permStatus === 'granted' ? 'Allowed' : permStatus === 'denied' ? 'Blocked' : permStatus === 'default' ? 'Not asked' : 'Not supported';
+      permRow.appendChild(el('span', { className: 'value', textContent: permLabel, style: { color: permStatus === 'granted' ? 'var(--cat-personal)' : permStatus === 'denied' ? 'var(--danger)' : '' } }));
+      notifCard.appendChild(permRow);
+
+      var testRow = el('div', { className: 'settings-row' });
+      testRow.appendChild(el('label', { textContent: 'Test' }));
+      var testBtn = el('button', { className: 'btn-primary', textContent: 'Send Test', style: { width: 'auto', padding: '8px 20px', fontSize: '14px' } });
+      testBtn.addEventListener('click', function() {
+        if (!('Notification' in window)) { showToast('Notifications not supported', 'error'); return; }
+        if (Notification.permission === 'default') {
+          Notification.requestPermission().then(function(p) {
+            if (p === 'granted') {
+              new Notification('Reminders', { body: 'Notifications are working!' });
+              showToast('Notification sent!', 'success');
+            } else { showToast('Permission denied', 'error'); }
+            render();
+          });
+        } else if (Notification.permission === 'granted') {
+          new Notification('Reminders', { body: 'Notifications are working!' });
+          showToast('Notification sent!', 'success');
+        } else {
+          showToast('Notifications blocked — enable in browser settings', 'error');
+        }
+      });
+      testRow.appendChild(testBtn);
+      notifCard.appendChild(testRow);
+
+      notifSection.appendChild(notifCard);
+      notifSection.appendChild(el('div', { className: 'hint', textContent: 'The app checks for due reminders every 60 seconds. Keep the tab open to receive alerts.' }));
+      container.appendChild(notifSection);
+
       // About
       var aboutSection = el('div', { className: 'settings-section' });
       aboutSection.appendChild(el('div', { className: 'settings-heading', textContent: 'About' }));

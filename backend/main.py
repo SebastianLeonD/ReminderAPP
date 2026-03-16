@@ -26,7 +26,7 @@ app.add_middleware(
 DB_PATH = Path(__file__).parent / "reminders.db"
 TZ_FORMAT = "%m/%d/%Y %H:%M"
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
 VALID_CATEGORIES = {"homework", "applications", "gym", "personal", "work"}
 VALID_PRIORITIES = {"high", "medium", "low"}

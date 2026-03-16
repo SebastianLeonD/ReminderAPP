@@ -159,6 +159,40 @@ def list_reminders(
     return {"success": True, "count": len(reminders), "reminders": reminders, "error": None}
 
 
+# --- DUE ALERTS (must be before {reminder_id} routes) ---
+@app.get("/webhook/api/reminders/due-alerts")
+def get_due_alerts(x_user_id: str = Header(...)):
+    now = datetime.now().strftime(TZ_FORMAT)
+    conn = get_db()
+    rows = conn.execute(
+        """
+        SELECT rt.id as alert_id, rt.reminder_time, rt.offset_minutes,
+               r.id as reminder_id, r.title, r.description, r.category, r.priority
+        FROM reminder_times rt
+        JOIN reminders r ON rt.reminder_id = r.id
+        WHERE r.user_id = ? AND rt.sent = 0 AND r.sent = 0 AND rt.reminder_time <= ?
+        ORDER BY rt.reminder_time ASC
+        """,
+        (x_user_id, now),
+    ).fetchall()
+    conn.close()
+
+    alerts = [
+        {
+            "id": r["alert_id"],
+            "reminderId": r["reminder_id"],
+            "title": r["title"],
+            "description": r["description"],
+            "category": r["category"],
+            "priority": r["priority"],
+            "reminderTime": r["reminder_time"],
+            "offsetMinutes": r["offset_minutes"],
+        }
+        for r in rows
+    ]
+    return {"success": True, "alerts": alerts, "error": None}
+
+
 # --- GET ONE ---
 @app.get("/webhook/api/reminders/{reminder_id}")
 def get_reminder(reminder_id: str, x_user_id: str = Header(...)):
@@ -412,39 +446,6 @@ Return ONLY valid JSON, no markdown fences."""
             "error": f"AI parsing failed, using defaults: {str(e)}",
         }
 
-
-# --- DUE ALERTS ---
-@app.get("/webhook/api/reminders/due-alerts")
-def get_due_alerts(x_user_id: str = Header(...)):
-    now = datetime.now().strftime(TZ_FORMAT)
-    conn = get_db()
-    rows = conn.execute(
-        """
-        SELECT rt.id as alert_id, rt.reminder_time, rt.offset_minutes,
-               r.id as reminder_id, r.title, r.description, r.category, r.priority
-        FROM reminder_times rt
-        JOIN reminders r ON rt.reminder_id = r.id
-        WHERE r.user_id = ? AND rt.sent = 0 AND r.sent = 0 AND rt.reminder_time <= ?
-        ORDER BY rt.reminder_time ASC
-        """,
-        (x_user_id, now),
-    ).fetchall()
-    conn.close()
-
-    alerts = [
-        {
-            "id": r["alert_id"],
-            "reminderId": r["reminder_id"],
-            "title": r["title"],
-            "description": r["description"],
-            "category": r["category"],
-            "priority": r["priority"],
-            "reminderTime": r["reminder_time"],
-            "offsetMinutes": r["offset_minutes"],
-        }
-        for r in rows
-    ]
-    return {"success": True, "alerts": alerts, "error": None}
 
 
 # --- MARK ALERT SENT ---

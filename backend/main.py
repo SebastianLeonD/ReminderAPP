@@ -1,3 +1,4 @@
+import calendar
 import json
 import os
 import sqlite3
@@ -67,6 +68,13 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_rt_reminder ON reminder_times(reminder_id);
         CREATE INDEX IF NOT EXISTS idx_rt_time ON reminder_times(reminder_time);
     """)
+    # Migrate: add recurrence columns if missing
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(reminders)").fetchall()]
+    if "recurrence" not in cols:
+        conn.execute("ALTER TABLE reminders ADD COLUMN recurrence TEXT DEFAULT NULL")
+    if "recurrence_day" not in cols:
+        conn.execute("ALTER TABLE reminders ADD COLUMN recurrence_day TEXT DEFAULT NULL")
+    conn.commit()
     conn.close()
 
 
@@ -104,6 +112,8 @@ def row_to_dict(row, conn=None):
         "sent": bool(row["sent"]),
         "createdAt": row["created_at"],
         "reminderTimes": rt,
+        "recurrence": row["recurrence"] if "recurrence" in row.keys() else None,
+        "recurrenceDay": row["recurrence_day"] if "recurrence_day" in row.keys() else None,
     }
 
 
@@ -225,16 +235,20 @@ async def create_reminder(request: Request, x_user_id: str = Header(...)):
     priority = body.get("priority", "medium")
     event_time = body.get("eventTime", now)
     reminder_times = body.get("reminderTimes", [])
+    recurrence = body.get("recurrence", None)
+    recurrence_day = body.get("recurrenceDay", None)
 
     if category not in VALID_CATEGORIES:
         category = "personal"
     if priority not in VALID_PRIORITIES:
         priority = "medium"
+    if recurrence not in (None, "daily", "weekly", "monthly"):
+        recurrence = None
 
     conn = get_db()
     conn.execute(
-        "INSERT INTO reminders (id, user_id, title, description, category, priority, event_time, sent, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
-        (reminder_id, x_user_id, title, description, category, priority, event_time, now),
+        "INSERT INTO reminders (id, user_id, title, description, category, priority, event_time, sent, created_at, recurrence, recurrence_day) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+        (reminder_id, x_user_id, title, description, category, priority, event_time, now, recurrence, recurrence_day),
     )
 
     if reminder_times:
@@ -261,6 +275,13 @@ async def update_reminder(reminder_id: str, request: Request, x_user_id: str = H
     if "sent" in body:
         fields.append("sent = ?")
         params.append(1 if body["sent"] else 0)
+
+    if "recurrence" in body:
+        fields.append("recurrence = ?")
+        params.append(body["recurrence"] if body["recurrence"] in ("daily", "weekly", "monthly") else None)
+    if "recurrenceDay" in body:
+        fields.append("recurrence_day = ?")
+        params.append(body["recurrenceDay"])
 
     reminder_times = body.get("reminderTimes", None)
 
@@ -311,13 +332,59 @@ def delete_reminder(reminder_id: str, x_user_id: str = Header(...)):
 
 
 # --- MARK COMPLETE ---
+def next_event_time(event_time_str, recurrence, recurrence_day):
+    """Calculate the next occurrence for a recurring reminder."""
+    try:
+        dt = datetime.strptime(event_time_str, TZ_FORMAT)
+    except ValueError:
+        return None
+
+    if recurrence == "daily":
+        return (dt + timedelta(days=1)).strftime(TZ_FORMAT)
+    elif recurrence == "weekly":
+        return (dt + timedelta(days=7)).strftime(TZ_FORMAT)
+    elif recurrence == "monthly":
+        month = dt.month + 1
+        year = dt.year
+        if month > 12:
+            month = 1
+            year += 1
+        day = min(dt.day, calendar.monthrange(year, month)[1])
+        return dt.replace(year=year, month=month, day=day).strftime(TZ_FORMAT)
+    return None
+
+
 @app.post("/webhook/api/reminders/{reminder_id}/complete")
 def mark_complete(reminder_id: str, x_user_id: str = Header(...)):
     conn = get_db()
+    row = conn.execute("SELECT * FROM reminders WHERE id = ? AND user_id = ?", (reminder_id, x_user_id)).fetchone()
+    if not row:
+        conn.close()
+        return JSONResponse({"success": False, "error": "Not found"}, status_code=404)
+
     conn.execute("UPDATE reminders SET sent = 1 WHERE id = ? AND user_id = ?", (reminder_id, x_user_id))
+
+    new_id = None
+    recurrence = row["recurrence"] if "recurrence" in row.keys() else None
+
+    if recurrence:
+        recurrence_day = row["recurrence_day"] if "recurrence_day" in row.keys() else None
+        new_event = next_event_time(row["event_time"], recurrence, recurrence_day)
+        if new_event:
+            new_id = str(uuid.uuid4())
+            now = datetime.now().strftime(TZ_FORMAT)
+            conn.execute(
+                "INSERT INTO reminders (id, user_id, title, description, category, priority, event_time, sent, created_at, recurrence, recurrence_day) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+                (new_id, x_user_id, row["title"], row["description"], row["category"], row["priority"], new_event, now, recurrence, recurrence_day),
+            )
+            # Copy alert offsets to the new occurrence
+            old_alerts = conn.execute("SELECT offset_minutes FROM reminder_times WHERE reminder_id = ?", (reminder_id,)).fetchall()
+            if old_alerts:
+                insert_reminder_times(conn, new_id, new_event, [{"offsetMinutes": a["offset_minutes"]} for a in old_alerts])
+
     conn.commit()
     conn.close()
-    return {"success": True, "message": "Reminder marked complete", "error": None}
+    return {"success": True, "message": "Reminder marked complete", "nextId": new_id, "recurrence": recurrence, "error": None}
 
 
 # --- AI PARSE ---
@@ -347,8 +414,10 @@ Return JSON with these fields:
 - description: extra context or empty string
 - category: one of [homework, applications, gym, personal, work]. Match keywords: "gym"/"workout"/"exercise"=gym, "homework"/"assignment"/"class"/"exam"/"study"=homework, "job"/"meeting"/"work"=work, "apply"/"application"=applications. Default: personal
 - priority: "high" if "important"/"urgent"/"ASAP", "low" if "whenever"/"no rush", else "medium"
-- event_time: the MAIN event time in MM/dd/yyyy HH:mm format
+- event_time: the MAIN event time in MM/dd/yyyy HH:mm format (the FIRST occurrence for recurring)
 - reminder_offsets: array of integers (minutes before event_time to alert the user)
+- recurrence: "daily", "weekly", "monthly", or null. Detect from "every day"/"daily"/"every Monday"/"every week"/"every month"/"monthly"
+- recurrence_day: for weekly the lowercase day name (e.g. "monday"), for monthly the day number (e.g. "15"), null otherwise
 
 CRITICAL RULES:
 1. "today" = {now.strftime("%m/%d/%Y")}. NOT tomorrow. If user says "today at 7pm", event_time = "{now.strftime("%m/%d/%Y")} 19:00"
@@ -367,7 +436,16 @@ User: "submit math homework by friday 3pm, really important"
 Result: {{"title": "Submit math homework", "description": "", "category": "homework", "priority": "high", "event_time": "03/20/2026 15:00", "reminder_offsets": [1440, 60, 15, 5]}}
 
 User: "call mom tomorrow"
-Result: {{"title": "Call mom", "description": "", "category": "personal", "priority": "medium", "event_time": "{(now + timedelta(days=1)).strftime("%m/%d/%Y")} 09:00", "reminder_offsets": [60, 15]}}
+Result: {{"title": "Call mom", "description": "", "category": "personal", "priority": "medium", "event_time": "{(now + timedelta(days=1)).strftime("%m/%d/%Y")} 09:00", "reminder_offsets": [60, 15], "recurrence": null, "recurrence_day": null}}
+
+User: "gym every Monday at 7am"
+Result: {{"title": "Go to the gym", "description": "", "category": "gym", "priority": "medium", "event_time": "03/17/2026 07:00", "reminder_offsets": [60, 15], "recurrence": "weekly", "recurrence_day": "monday"}}
+
+User: "take vitamins daily at 8am"
+Result: {{"title": "Take vitamins", "description": "", "category": "personal", "priority": "medium", "event_time": "{(now + timedelta(days=1)).strftime("%m/%d/%Y")} 08:00", "reminder_offsets": [15], "recurrence": "daily", "recurrence_day": null}}
+
+User: "pay rent on the 1st every month"
+Result: {{"title": "Pay rent", "description": "", "category": "personal", "priority": "high", "event_time": "04/01/2026 09:00", "reminder_offsets": [1440, 60], "recurrence": "monthly", "recurrence_day": "1"}}
 
 Return ONLY valid JSON."""
 
@@ -450,6 +528,11 @@ Return ONLY valid JSON."""
 
         reminder_times = [{"offsetMinutes": o, "label": offset_label(o)} for o in sorted(valid_offsets, reverse=True)]
 
+        recurrence = parsed.get("recurrence", None)
+        recurrence_day = parsed.get("recurrence_day", None)
+        if recurrence not in (None, "daily", "weekly", "monthly"):
+            recurrence = None
+
         return {
             "success": True,
             "parsed": {
@@ -459,6 +542,8 @@ Return ONLY valid JSON."""
                 "priority": priority,
                 "eventTime": event_time,
                 "reminderTimes": reminder_times,
+                "recurrence": recurrence,
+                "recurrenceDay": recurrence_day,
             },
             "error": None,
         }

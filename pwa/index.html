@@ -410,6 +410,9 @@
     /* ── Make cards tappable ── */
     .card-body { cursor: pointer; }
 
+    /* ── Recurrence badge on cards ── */
+    .card-recurrence { font-size: 10px; padding: 1px 6px; border-radius: 10px; background: rgba(74,127,212,0.1); color: var(--cat-homework); font-weight: 500; }
+
     /* ── Detail View ── */
     .detail-back {
       display: flex; align-items: center; gap: 6px; padding: 10px 0;
@@ -626,13 +629,18 @@
       S.loading = false; render();
     }
     async function completeReminder(id) {
-      const el = document.querySelector('[data-id="' + id + '"]');
-      if (el) el.style.background = 'rgba(74,173,107,0.08)';
+      var card = document.querySelector('[data-id="' + id + '"]');
+      if (card) card.style.background = 'rgba(74,173,107,0.08)';
       try {
-        await api('/' + id + '/complete', { method: 'POST' });
-        const r = S.reminders.find(x => x.id === id);
+        var res = await api('/' + id + '/complete', { method: 'POST' });
+        var r = S.reminders.find(function(x) { return x.id === id; });
         if (r) r.sent = true;
-        render();
+        if (res.recurrence && res.nextId) {
+          showToast('Next ' + res.recurrence + ' occurrence created', 'success');
+          await loadReminders();
+        } else {
+          render();
+        }
       } catch { showToast('Failed', 'error'); }
     }
     async function uncompleteReminder(id) {
@@ -794,7 +802,12 @@
       var timeText = (od ? 'Overdue \u2014 ' : '') + dispTime(d);
       var timeSpan = el('span', { className: od ? 'overdue-time' : '', textContent: timeText });
       var badge = el('span', { className: 'card-badge', textContent: cat ? cat.label : r.category });
-      var meta = el('div', { className: 'card-meta' }, [timeSpan, badge]);
+      var metaChildren = [timeSpan, badge];
+      if (r.recurrence) {
+        var recLabel = r.recurrence === 'daily' ? 'Daily' : r.recurrence === 'weekly' ? 'Weekly' : 'Monthly';
+        metaChildren.push(el('span', { className: 'card-recurrence', textContent: recLabel }));
+      }
+      var meta = el('div', { className: 'card-meta' }, metaChildren);
       bodyChildren.push(meta);
 
       // Alert time chips — show actual times
@@ -1198,6 +1211,28 @@
       dtField.appendChild(dtInput);
       card.appendChild(dtField);
 
+      // Recurrence
+      var recField = el('div', { className: 'preview-field' }, [el('label', { className: 'form-label', textContent: 'Repeats' })]);
+      var recPicker = el('div', { className: 'chip-group', id: 'rec-picker' });
+      var recOptions = [
+        { key: null, label: 'One-time' },
+        { key: 'daily', label: 'Daily' },
+        { key: 'weekly', label: 'Weekly' },
+        { key: 'monthly', label: 'Monthly' },
+      ];
+      var currentRec = p.recurrence || null;
+      recOptions.forEach(function(opt) {
+        var chip = el('button', { className: 'chip-option' + (currentRec === opt.key ? ' selected' : ''), 'data-val': opt.key || '', type: 'button', textContent: opt.label });
+        if (currentRec === opt.key) { chip.style.background = 'var(--cat-homework)'; chip.style.borderColor = 'transparent'; }
+        chip.addEventListener('click', function() {
+          S.parsedReminder.recurrence = opt.key;
+          pickChip('rec-picker', opt.key || '', 'var(--cat-homework)');
+        });
+        recPicker.appendChild(chip);
+      });
+      recField.appendChild(recPicker);
+      card.appendChild(recField);
+
       // Alert times (editable datetime pickers)
       var alertField = el('div', { className: 'preview-field' }, [el('label', { className: 'form-label', textContent: 'Reminder Alerts' })]);
 
@@ -1276,6 +1311,8 @@
           title: title, description: desc, category: cat, priority: pri,
           eventTime: fmtApi(date),
           reminderTimes: S.parsedReminder.reminderTimes || [],
+          recurrence: S.parsedReminder.recurrence || null,
+          recurrenceDay: S.parsedReminder.recurrenceDay || null,
         });
       });
       btnRow.appendChild(createBtn);
@@ -1426,7 +1463,10 @@
         reminderTimes = S._editAlerts.map(function(ea) { return { offsetMinutes: ea.offsetMinutes, reminderTime: ea.time }; });
       }
 
-      var body = { title: title, description: desc, category: cat, priority: pri, eventTime: eventTime };
+      var recEl = document.querySelector('#d-rec-picker .selected');
+      var rec = recEl ? (recEl.getAttribute('data-val') || null) : r.recurrence;
+
+      var body = { title: title, description: desc, category: cat, priority: pri, eventTime: eventTime, recurrence: rec };
       if (reminderTimes !== null) body.reminderTimes = reminderTimes;
 
       try {
@@ -1523,6 +1563,34 @@
       var timeInput = el('input', { className: 'detail-time-input', type: 'datetime-local', id: 'd-time', value: toDTL(d) });
       timeField.appendChild(timeInput);
       inner.appendChild(timeField);
+
+      // Recurrence (editable)
+      if (!r.sent) {
+        var recField2 = el('div', { className: 'detail-field' });
+        recField2.appendChild(el('div', { className: 'detail-field-label', textContent: 'Repeats' }));
+        var recPicker2 = el('div', { className: 'chip-group', id: 'd-rec-picker' });
+        var recOpts = [
+          { key: null, label: 'One-time' },
+          { key: 'daily', label: 'Daily' },
+          { key: 'weekly', label: 'Weekly' },
+          { key: 'monthly', label: 'Monthly' },
+        ];
+        var curRec = r.recurrence || null;
+        recOpts.forEach(function(opt) {
+          var chip = el('button', { className: 'chip-option' + (curRec === opt.key ? ' selected' : ''), 'data-val': opt.key || '', type: 'button', textContent: opt.label });
+          if (curRec === opt.key) { chip.style.background = 'var(--cat-homework)'; chip.style.borderColor = 'transparent'; }
+          chip.addEventListener('click', function() { pickChip('d-rec-picker', opt.key || '', 'var(--cat-homework)'); });
+          recPicker2.appendChild(chip);
+        });
+        recField2.appendChild(recPicker2);
+        inner.appendChild(recField2);
+      } else if (r.recurrence) {
+        var recInfo = el('div', { className: 'detail-field' });
+        recInfo.appendChild(el('div', { className: 'detail-field-label', textContent: 'Repeats' }));
+        var recLabel2 = r.recurrence === 'daily' ? 'Daily' : r.recurrence === 'weekly' ? 'Weekly' : 'Monthly';
+        recInfo.appendChild(el('div', { className: 'detail-time-display', textContent: recLabel2 }));
+        inner.appendChild(recInfo);
+      }
 
       // Reminder alerts (editable)
       if (!r.sent) {

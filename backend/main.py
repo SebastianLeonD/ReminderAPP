@@ -409,49 +409,59 @@ async def parse_reminder(request: Request, x_user_id: str = Header(...)):
     now_str = now.strftime(TZ_FORMAT)
     day_name = now.strftime("%A")
 
-    prompt = f"""You are a reminder parsing assistant for a college student. Parse natural speech into a structured reminder.
+    tomorrow_str = (now + timedelta(days=1)).strftime("%m/%d/%Y")
 
-RIGHT NOW it is: {day_name}, {now_str}
+    prompt = f"""You parse spoken reminders into JSON. Be precise with dates and times.
 
-IMPORTANT: "today" means {now.strftime("%m/%d/%Y")}. "tomorrow" means {(now + timedelta(days=1)).strftime("%m/%d/%Y")}.
+CURRENT TIME: {day_name}, {now_str}
+TODAY = {now.strftime("%m/%d/%Y")}
+TOMORROW = {tomorrow_str}
 
-Return JSON with these fields:
-- title: short, clean title (remove "remind me to", "don't forget to", times, dates — just the TASK)
-- description: extra context or empty string
-- category: one of [homework, applications, gym, personal, work]. Match keywords: "gym"/"workout"/"exercise"=gym, "homework"/"assignment"/"class"/"exam"/"study"=homework, "job"/"meeting"/"work"=work, "apply"/"application"=applications. Default: personal
-- priority: "high" if "important"/"urgent"/"ASAP", "low" if "whenever"/"no rush", else "medium"
-- event_time: the MAIN event time in MM/dd/yyyy HH:mm format (the FIRST occurrence for recurring)
-- reminder_offsets: array of integers (minutes before event_time to alert the user)
-- recurrence: "daily", "weekly", "monthly", or null. Detect from "every day"/"daily"/"every Monday"/"every week"/"every month"/"monthly"
-- recurrence_day: for weekly the lowercase day name (e.g. "monday"), for monthly the day number (e.g. "15"), null otherwise
+OUTPUT FORMAT (JSON):
+- title: clean task name only (strip "remind me", times, dates)
+- description: extra context or ""
+- category: homework | applications | gym | personal | work (match: gym/workout/exercise→gym, homework/assignment/class/exam/study→homework, job/meeting/work→work, apply/application→applications, else personal)
+- priority: high (important/urgent/ASAP) | low (whenever/no rush) | medium (default)
+- event_time: MM/dd/yyyy HH:mm — the event/deadline time
+- reminder_offsets: array of minutes before event_time to send alerts. Calculate precisely.
+- recurrence: daily | weekly | monthly | null
+- recurrence_day: lowercase day name for weekly, day number for monthly, null otherwise
 
-CRITICAL RULES:
-1. "today" = {now.strftime("%m/%d/%Y")}. NOT tomorrow. If user says "today at 7pm", event_time = "{now.strftime("%m/%d/%Y")} 19:00"
-2. "tonight" = today evening. "this evening" = today evening.
-3. If user says "remind me at 6pm and 6:30pm", those are ALERT TIMES, not event times. Convert to offsets from the event_time.
-4. If no date given, assume TODAY if a future time today is possible, otherwise tomorrow.
-5. If no time given, default to 09:00.
+HOW TO CALCULATE reminder_offsets:
+The user may say SPECIFIC TIMES to be reminded. You MUST convert those to minutes before event_time.
+Formula: offset = (event_time - alert_time) in minutes
+
+Example calculation:
+- Event at tomorrow 3:00 PM = {tomorrow_str} 15:00
+- "remind me today at 11 PM" = {now.strftime("%m/%d/%Y")} 23:00. That's 16 hours before = 960 minutes. offset = 960
+- "remind me tomorrow at 8 AM" = {tomorrow_str} 08:00. That's 7 hours before = 420 minutes. offset = 420
+- "remind me tomorrow at 9 AM" = {tomorrow_str} 09:00. That's 6 hours before = 360 minutes. offset = 360
+- "remind me tomorrow at 10 AM" = {tomorrow_str} 10:00. That's 5 hours before = 300 minutes. offset = 300
+
+If user does NOT specify alert times, use smart defaults:
+- Event >1 day away: [1440, 60, 15]
+- Event same day >2hrs away: [120, 30]
+- Event <2hrs away: [30, 10]
 
 EXAMPLES:
 
-User: "remind me to go to the gym today at 7pm, remind me at 6pm and 6:30pm"
-Result: {{"title": "Go to the gym", "description": "", "category": "gym", "priority": "medium", "event_time": "{now.strftime("%m/%d/%Y")} 19:00", "reminder_offsets": [60, 30]}}
-(6pm = 60 min before 7pm, 6:30pm = 30 min before 7pm)
+Input: "go to the gym today at 7pm, remind me at 6pm and 6:30pm"
+{{"title": "Go to the gym", "description": "", "category": "gym", "priority": "medium", "event_time": "{now.strftime("%m/%d/%Y")} 19:00", "reminder_offsets": [60, 30], "recurrence": null, "recurrence_day": null}}
 
-User: "submit math homework by friday 3pm, really important"
-Result: {{"title": "Submit math homework", "description": "", "category": "homework", "priority": "high", "event_time": "03/20/2026 15:00", "reminder_offsets": [1440, 60, 15, 5]}}
+Input: "I have to go to work tomorrow at 3 PM, remind me today at 11 PM and tomorrow at 8, 9, and 10 AM"
+{{"title": "Go to work", "description": "", "category": "work", "priority": "medium", "event_time": "{tomorrow_str} 15:00", "reminder_offsets": [960, 420, 360, 300], "recurrence": null, "recurrence_day": null}}
 
-User: "call mom tomorrow"
-Result: {{"title": "Call mom", "description": "", "category": "personal", "priority": "medium", "event_time": "{(now + timedelta(days=1)).strftime("%m/%d/%Y")} 09:00", "reminder_offsets": [60, 15], "recurrence": null, "recurrence_day": null}}
+Input: "submit homework by friday 3pm, really important"
+{{"title": "Submit homework", "description": "", "category": "homework", "priority": "high", "event_time": "03/20/2026 15:00", "reminder_offsets": [1440, 60, 15], "recurrence": null, "recurrence_day": null}}
 
-User: "gym every Monday at 7am"
-Result: {{"title": "Go to the gym", "description": "", "category": "gym", "priority": "medium", "event_time": "03/17/2026 07:00", "reminder_offsets": [60, 15], "recurrence": "weekly", "recurrence_day": "monday"}}
+Input: "gym every Monday at 7am"
+{{"title": "Go to the gym", "description": "", "category": "gym", "priority": "medium", "event_time": "03/23/2026 07:00", "reminder_offsets": [60, 15], "recurrence": "weekly", "recurrence_day": "monday"}}
 
-User: "take vitamins daily at 8am"
-Result: {{"title": "Take vitamins", "description": "", "category": "personal", "priority": "medium", "event_time": "{(now + timedelta(days=1)).strftime("%m/%d/%Y")} 08:00", "reminder_offsets": [15], "recurrence": "daily", "recurrence_day": null}}
+Input: "take vitamins daily at 8am"
+{{"title": "Take vitamins", "description": "", "category": "personal", "priority": "medium", "event_time": "{tomorrow_str} 08:00", "reminder_offsets": [15], "recurrence": "daily", "recurrence_day": null}}
 
-User: "pay rent on the 1st every month"
-Result: {{"title": "Pay rent", "description": "", "category": "personal", "priority": "high", "event_time": "04/01/2026 09:00", "reminder_offsets": [1440, 60], "recurrence": "monthly", "recurrence_day": "1"}}
+Input: "call mom tomorrow"
+{{"title": "Call mom", "description": "", "category": "personal", "priority": "medium", "event_time": "{tomorrow_str} 09:00", "reminder_offsets": [60, 15], "recurrence": null, "recurrence_day": null}}
 
 Return ONLY valid JSON."""
 

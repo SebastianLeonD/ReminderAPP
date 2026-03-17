@@ -1073,7 +1073,13 @@
       transcriptArea.id = 'voice-textarea';
       transcriptArea.value = S.voiceText;
       transcriptArea.placeholder = speechSupported ? 'Tap the mic and speak naturally, or type here...' : 'Type your reminder here...';
-      transcriptArea.addEventListener('input', function() { S.voiceText = this.value; });
+      transcriptArea.addEventListener('input', function() {
+        S.voiceText = this.value;
+        var btn = document.getElementById('send-ai-btn');
+        if (btn) btn.disabled = !this.value.trim();
+        var st = document.getElementById('rec-status-text');
+        if (st) st.textContent = this.value.trim() ? 'Ready to send' : 'Type or tap mic';
+      });
       card.appendChild(transcriptArea);
 
       // ── Bottom actions ──
@@ -1094,11 +1100,11 @@
 
       // Status text
       var statusText = S.parsing ? 'AI is thinking...' : (S.recording ? 'Recording...' : (S.voiceText ? 'Ready to send' : 'Tap mic to start'));
-      var statusEl = el('div', { className: 'rec-status' + (S.parsing ? ' thinking-text' : ''), textContent: statusText });
+      var statusEl = el('div', { className: 'rec-status' + (S.parsing ? ' thinking-text' : ''), id: 'rec-status-text', textContent: statusText });
       actions.appendChild(statusEl);
 
       // Send button
-      var sendBtn = el('button', { className: 'rec-action-btn rec-send' + (S.parsing ? ' thinking' : ''), title: 'Send to AI' });
+      var sendBtn = el('button', { className: 'rec-action-btn rec-send' + (S.parsing ? ' thinking' : ''), title: 'Send to AI', id: 'send-ai-btn' });
       var sendSvg = svgIcon([{ tag: 'line', x1: '22', y1: '2', x2: '11', y2: '13' }, { tag: 'path', d: 'M22 2L15 22L11 13L2 9L22 2' }]);
       sendBtn.appendChild(sendSvg);
       if (!S.voiceText.trim() || S.parsing) sendBtn.disabled = true;

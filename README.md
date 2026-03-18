@@ -12,7 +12,7 @@ https://github.com/user-attachments/assets/WholeAppInUse.MP4
 
 | Today's Reminders | Create with Voice | Reminder Detail |
 |---|---|---|
-| ![Today's Reminders](Today'sRemindersPage.PNG) | ![Create Reminder](MakeReminderPage.PNG) | ![Inside Reminder](InsideReminderPage.PNG) |
+| ![Today's Reminders](assets/Today'sRemindersPage.PNG) | ![Create Reminder](assets/MakeReminderPage.PNG) | ![Inside Reminder](assets/InsideReminderPage.PNG) |
 
 ## Features
 

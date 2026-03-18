@@ -1,24 +1,3 @@
-# Auto Claude data directory
-.auto-claude/
-
-# macOS
-.DS_Store
-
-# Xcode
-*.xcuserstate
-xcuserdata/
-DerivedData/
-build/
-*.pbxuser
-*.mode1v3
-*.mode2v3
-*.perspectivev3
-*.moved-aside
-*.hmap
-*.ipa
-*.dSYM.zip
-*.dSYM
-
 # API keys
 backend/.env
 *.env
@@ -33,8 +12,20 @@ __pycache__/
 # Logs
 *.log
 
-# Claude worktrees
+# macOS
+.DS_Store
+
+# Old app directories (not part of current project)
+ReminderApp/
+reminderapp3/
+
+# IDE / Editor
 .claude/worktrees/
+.auto-claude/
 
 # Node
 node_modules/
+
+# Misc
+*.json
+!pwa/manifest.json

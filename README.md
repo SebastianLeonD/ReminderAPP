@@ -169,4 +169,8 @@ All endpoints require `x-user-id` header.
 
 ## License
 
-MIT
+MIT License — free to use, modify, and distribute.
+
+If you use this project or build upon it, please credit the original author:
+
+**Created by [Sebastian Leon](https://github.com/SebastianLeonD)**
